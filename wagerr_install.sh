@@ -29,9 +29,10 @@ swapon /swapfile
 swapon -s
 echo "/swapfile none swap sw 0 0" >> /etc/fstab
 
+echo "How many nodes do you create?."
 #echo "Enter alias for new node."
 #   echo -e "${YELLOW}输入新节点别名.${NC}"
-#   read ALIAS1
+read -e MNCOUNT
 
 function purgeOldInstallation() {
     echo -e "${GREEN}Searching and removing old $COIN_NAME files and configurations${NC}"
@@ -74,17 +75,18 @@ function download_node() {
 
 
 function configure_systemd() {
-  cat << EOF > /etc/systemd/system/$COIN_NAME.service
+for (i=1; i<=$MNCOUNT; i++){
+  cat << EOF > /etc/systemd/system/$COIN_NAME_$MNCOUNT.service
 [Unit]
-Description=$COIN_NAME service
+Description=$COIN_NAME$MNCOUNT service
 After=network.target
 [Service]
 User=root
 Group=root
 Type=forking
 #PIDFile=$CONFIGFOLDER/$COIN_NAME.pid
-ExecStart=$COIN_PATH$COIN_DAEMON -daemon -conf=$CONFIGFOLDER/$CONFIG_FILE -datadir=$CONFIGFOLDER
-ExecStop=-$COIN_PATH_$COIN_CLI -conf=$CONFIGFOLDER/$CONFIG_FILE -datadir=$CONFIGFOLDER stop
+ExecStart=$COIN_PATH$COIN_DAEMON -daemon -conf=$CONFIGFOLDER$MNCOUNT/$CONFIG_FILE -datadir=$CONFIGFOLDER$MNCOUNT
+ExecStop=-$COIN_PATH$COIN_CLI -conf=$CONFIGFOLDER$MNCOUNT/$CONFIG_FILE -datadir=$CONFIGFOLDER$MNCOUNT stop
 Restart=always
 PrivateTmp=true
 TimeoutStopSec=60s
@@ -97,8 +99,8 @@ EOF
 
   systemctl daemon-reload
   sleep 3
-  systemctl start $COIN_NAME.service
-  systemctl enable $COIN_NAME.service >/dev/null 2>&1
+  systemctl start $COIN_NAME$MNCOUNT.service
+  systemctl enable $COIN_NAME$MNCOUNT.service >/dev/null 2>&1
 
   if [[ -z "$(ps axo cmd:100 | egrep $COIN_DAEMON)" ]]; then
     echo -e "${RED}$COIN_NAME is not running${NC}, please investigate. You should start by running the following commands as root:"
@@ -107,25 +109,29 @@ EOF
     echo -e "less /var/log/syslog${NC}"
     exit 1
   fi
+  }
 }
 
 
 function create_config() {
-  mkdir $CONFIGFOLDER >/dev/null 2>&1
+    for (i=1; i<=$MNCOUNT;i++){
+  mkdir $CONFIGFOLDER$MNCOUNT >/dev/null 2>&1
   RPCUSER=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 10 | head -n 1)
   RPCPASSWORD=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 20 | head -n 1)
-  cat << EOF > $CONFIGFOLDER/$CONFIG_FILE
+  cat << EOF > $CONFIGFOLDER$MNCOUNT/$CONFIG_FILE
 rpcuser=$RPCUSER
 rpcpassword=$RPCPASSWORD
 rpcallowip=127.0.0.1
 listen=1
 server=1
 daemon=1
-port=$COIN_PORT
+port=$COIN_PORT+$i
 EOF
+    }
 }
 
 function create_key() {
+    for (i=1; i<=$MNCOUNT;i++){
 #  echo -e "Enter your ${RED}$COIN_NAME Masternode Private Key${NC}. Leave it blank to generate a new ${RED}Masternode Private Key${NC} for you:"
 #  read -e COINKEY
   if [[ -z "$COINKEY" ]]; then
@@ -135,29 +141,31 @@ function create_key() {
    echo -e "${RED}$COIN_NAME server couldn not start. Check /var/log/syslog for errors.{$NC}"
    exit 1
   fi
-  COINKEY=$($COIN_CLI createmasternodekey)
+  COINKEY=$($COIN_CLI -conf=$CONFIGFOLDER$MNCOUNT/$CONFIG_FILE -datadir=$CONFIGFOLDER$MNCOUNT createmasternodekey)
   if [ "$?" -gt "0" ];
     then
     echo -e "${RED}Wallet not fully loaded. Let us wait and try again to generate the Private Key${NC}"
     sleep 30
-    COINKEY=$($COIN_CLI createmasternodekey)
+    COINKEY=$($COIN_CLI -conf=$CONFIGFOLDER$MNCOUNT/$CONFIG_FILE -datadir=$CONFIGFOLDER$MNCOUNT createmasternodekey)
   fi
-  $COIN_CLI stop
+  $COIN_CLI -conf=$CONFIGFOLDER$MNCOUNT/$CONFIG_FILE -datadir=$CONFIGFOLDER$MNCOUNT stop
 fi
 clear
+    }
 }
 
 function update_config() {
+    for (i=1; i<=$MNCOUNT;i++){
 #  sed -i 's/daemon=1/daemon=0/' $CONFIGFOLDER/$CONFIG_FILE
-  cat << EOF >> $CONFIGFOLDER/$CONFIG_FILE
+  cat << EOF >> $CONFIGFOLDER$MNCOUNT/$CONFIG_FILE
 logintimestamps=1
 maxconnections=256
 masternode=1
-bind=$NODEIP:$COIN_PORT
-externalip=$NODEIP:$COIN_PORT
+bind=$NODEIP
 masternodeprivkey=$COINKEY
-masternodeaddr=$NODEIP:$COIN_PORT
+masternodeaddr=$NODEIP:$COIN_PORT+$i
 EOF
+    }
 }
 
 
@@ -254,19 +262,21 @@ clear
 }
 
 function important_information() {
+    for (i=1; i<=$MNCOUNT;i++){
  echo
  echo -e "================================================================================================================================"
  echo -e "$COIN_NAME Masternode is up and running listening on port ${GREEN}$COIN_PORT${NC}."
  echo -e "Configuration file is: ${RED}$CONFIGFOLDER/$CONFIG_FILE${NC}"
- echo -e "Start: ${RED}systemctl start $COIN_NAME.service${NC}"
- echo -e "Stop: ${RED}systemctl stop $COIN_NAME.service${NC}"
+ echo -e "Start: ${RED}systemctl start $COIN_NAME$MNCOUNT.service${NC}"
+ echo -e "Stop: ${RED}systemctl stop $COIN_NAME$MNCOUNT.service${NC}"
  echo -e "VPS_IP:PORT ${RED}$NODEIP:$COIN_PORT${NC}"
  echo -e "MASTERNODE PRIVATEKEY is: ${RED}$COINKEY${NC}"
- echo -e "Please check ${GREEN}$COIN_NAME${NC} is running with the following command: ${GREEN}systemctl status $COIN_NAME.service${NC}"
+ echo -e "Please check ${GREEN}$COIN_NAME${NC} is running with the following command: ${GREEN}systemctl status $COIN_NAME$MNCOUNT.service${NC}"
  echo -e "${GREEN}复制下列节点配置信息并黏贴到本地钱包节点配置文件${NC}"
  echo -e "${GREEN}txhash 和 outputidx在本地钱包转25000WGR后到调试台输入 masternode outputs 得出${NC}"
  echo -e "${YELLOW}$HOSTNAME $NODEIP:$COIN_PORT $COINKEY "txhash" "outputidx"${NC}"
  echo -e "================================================================================================================================"
+}
 }
 
 function setup_node() {
